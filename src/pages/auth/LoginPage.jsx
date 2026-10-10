@@ -16,6 +16,8 @@ export default function LoginPage() {
       const { role } = await loginWithCredentials(username, password);
       if (role === 'Admin') {
         navigate('/admin/dashboard');
+      } else if (role === 'Judge') {
+        navigate('/judge/competitions');
       } else {
         navigate('/manager/dashboard');
       }

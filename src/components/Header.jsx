@@ -7,7 +7,7 @@ export default function Header({ userRole, setUserRole, activePage, onLogout }) 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const { currentUser, isSidebarOpen, setIsSidebarOpen } = useApp();
 
-  const displayName = currentUser?.name || (userRole === 'Admin' ? 'Admin Administrator' : 'Team Manager');
+  const displayName = currentUser?.name || (userRole === 'Admin' ? 'Admin Administrator' : userRole === 'Judge' ? 'Judge' : 'Team Manager');
   const initialLetter = (displayName || 'U').charAt(0).toUpperCase();
 
   // Page titles map
@@ -17,12 +17,20 @@ export default function Header({ userRole, setUserRole, activePage, onLogout }) 
     'create-team': { title: 'Create New Team', subtitle: 'Add a new team to Eduvanza Competition Fest' },
     'team-managers': { title: 'Team Managers', subtitle: 'Manage team manager access and credentials' },
     'create-manager': { title: 'Create Team Manager', subtitle: 'Assign manager credentials and team permissions' },
-    competitions: { title: 'Competitions', subtitle: 'Manage contest programs and criteria' },
+    judges: { title: 'Judges', subtitle: 'Manage competition judges and assignment credentials' },
+    'create-judge': { title: 'Create Official Judge', subtitle: 'Add a new evaluator and assign judge credentials' },
+    competitions: { 
+      title: userRole === 'Judge' ? 'Evaluation Sheet' : 'Competitions', 
+      subtitle: userRole === 'Judge' ? 'Evaluate assigned competitions and enter official scores' : 'Manage contest programs and criteria' 
+    },
+    'mark-entry': { title: 'Mark Entry', subtitle: 'Official evaluation sheet and scoring portal' },
     participants: { title: 'Participants', subtitle: 'View registered students and assigned events' },
-    reports: { title: 'Reports & Mark Entry', subtitle: 'Evaluate contests and compute championship results' },
+    reports: { title: 'Reports', subtitle: 'Sequential team rosters, program reports, and PDF exports' },
+    marks: { title: 'Marks Report', subtitle: 'Official evaluated mark sheets and published standings' },
     settings: { title: 'Settings', subtitle: 'System preferences and portal configuration' },
     'manager-dashboard': { title: 'Dashboard', subtitle: `Welcome back, ${displayName}` },
     'my-team': { title: 'My Team', subtitle: 'Manage your team details and participants' },
+    results: { title: 'Results & Standings', subtitle: 'Official championship standings and published scores' },
     announcements: { title: 'Announcements', subtitle: 'Official notices and fest broadcasts' },
   };
 
@@ -106,7 +114,7 @@ export default function Header({ userRole, setUserRole, activePage, onLogout }) 
               width: '36px',
               height: '36px',
               borderRadius: '50%',
-              background: userRole === 'Admin' ? '#2563eb' : '#16a34a',
+              background: userRole === 'Admin' ? '#2563eb' : userRole === 'Judge' ? '#d97706' : '#16a34a',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',

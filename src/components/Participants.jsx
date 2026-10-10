@@ -2,6 +2,14 @@ import React, { useState } from 'react';
 import { Users, BookOpen, Search, Filter, Eye, Plus, X, UserCheck, Calendar, Award, CheckCircle, Clock, Shield, MoreVertical, Edit, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
+// Helper to determine if a program is an individual event
+const isIndividualProgram = (prg) => {
+  if (!prg) return true;
+  if (prg.type && prg.type.toLowerCase() === 'group') return false;
+  if (prg.memberCount && Number(prg.memberCount) > 1) return false;
+  return true;
+};
+
 export default function Participants({
   teams = [],
   participants = [],
@@ -12,7 +20,7 @@ export default function Participants({
   programs = [],
   markEntries = [],
 }) {
-  const { userRole } = useApp();
+  const { userRole, activeManagerTeam } = useApp();
   // Navigation tab between "Participants List" and "Programs List"
   const [viewMode, setViewMode] = useState('participants'); // 'participants' | 'programs'
 
@@ -28,6 +36,23 @@ export default function Participants({
   const [viewingProgramModal, setViewingProgramModal] = useState(null); // Program object
   const [isAddParticipantOpen, setIsAddParticipantOpen] = useState(false);
   const [openMenuId, setOpenMenuId] = useState(null);
+  const [deletingParticipant, setDeletingParticipant] = useState(null); // Participant to delete
+
+  // Confirm delete participant handler
+  const handleConfirmDelete = async () => {
+    if (!deletingParticipant) return;
+    try {
+      if (onDeleteParticipant) {
+        await onDeleteParticipant(deletingParticipant.id);
+      } else if (setParticipants) {
+        setParticipants((prev) => prev.filter((item) => item.id !== deletingParticipant.id));
+      }
+    } catch (err) {
+      console.error('Error deleting participant:', err);
+    } finally {
+      setDeletingParticipant(null);
+    }
+  };
 
   // New Participant Form State
   const [newParticipant, setNewParticipant] = useState({
@@ -39,6 +64,11 @@ export default function Participants({
     email: '',
     selectedPrograms: [],
   });
+
+  const newPartIndivCount = newParticipant.selectedPrograms.filter((id) => {
+    const p = programs.find((x) => x.id === id);
+    return isIndividualProgram(p);
+  }).length;
 
   // Filtered Participants List
   const filteredParticipants = participants.filter((p) => {
@@ -78,11 +108,16 @@ export default function Participants({
     e.preventDefault();
     if (!newParticipant.name || !newParticipant.chestNo) return;
 
+    if (newPartIndivCount > 4) {
+      alert('⚠️ Cannot save: A participant cannot select more than 4 individual programs.');
+      return;
+    }
+
     const created = {
       id: `p-${Date.now()}`,
       chestNo: newParticipant.chestNo,
       name: newParticipant.name,
-      teamId: newParticipant.teamId,
+      teamId: (userRole === 'Manager' && activeManagerTeam) ? activeManagerTeam.id : newParticipant.teamId,
       category: newParticipant.category,
       gender: newParticipant.gender,
       email: newParticipant.email || `${newParticipant.name.toLowerCase().replace(/\s+/g, '.')}@eduvenza.com`,
@@ -100,7 +135,7 @@ export default function Participants({
     setNewParticipant({
       name: '',
       chestNo: '',
-      teamId: teams[0]?.id || 'team-gujarat',
+      teamId: (userRole === 'Manager' && activeManagerTeam) ? activeManagerTeam.id : (teams[0]?.id || 'team-gujarat'),
       category: 'Senior',
       gender: 'Male',
       email: '',
@@ -108,13 +143,24 @@ export default function Participants({
     });
   };
 
-  // Helper to toggle program selection in new participant form
+  // Helper to toggle program selection in new participant form (max 4 individual rule)
   const toggleProgramInForm = (prgId) => {
     setNewParticipant((prev) => {
       const exists = prev.selectedPrograms.includes(prgId);
       if (exists) {
         return { ...prev, selectedPrograms: prev.selectedPrograms.filter((id) => id !== prgId) };
       } else {
+        const targetPrg = programs.find((p) => p.id === prgId);
+        if (isIndividualProgram(targetPrg)) {
+          const currentCount = prev.selectedPrograms.filter((id) => {
+            const p = programs.find((x) => x.id === id);
+            return isIndividualProgram(p);
+          }).length;
+          if (currentCount >= 4) {
+            alert('⚠️ Maximum limit reached: One participant can select at most 4 individual programs.');
+            return prev;
+          }
+        }
         return { ...prev, selectedPrograms: [...prev.selectedPrograms, prgId] };
       }
     });
@@ -134,8 +180,19 @@ export default function Participants({
             </p>
           </div>
 
-          {userRole === 'Admin' && (
-            <button className="btn btn-primary" onClick={() => setIsAddParticipantOpen(true)}>
+          {(userRole === 'Admin' || userRole === 'Manager') && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                if (userRole === 'Manager' && activeManagerTeam) {
+                  setNewParticipant((prev) => ({
+                    ...prev,
+                    teamId: activeManagerTeam.id,
+                  }));
+                }
+                setIsAddParticipantOpen(true);
+              }}
+            >
               <Plus size={18} /> <span className="hide-on-mobile">Add Participant</span><span className="mobile-only-inline" style={{ display: 'none' }}>Add</span>
             </button>
           )}
@@ -458,35 +515,31 @@ export default function Participants({
                                 <Eye size={14} style={{ color: 'var(--text-muted)' }} /> View Programs
                               </button>
 
-                              {userRole === 'Admin' && (
-                                <>
-                                  <div style={{ height: '1px', background: 'var(--border-light)', margin: '0.2rem 0' }} />
+                              <div style={{ height: '1px', background: 'var(--border-light)', margin: '0.2rem 0' }} />
 
-                                  <button
-                                    onClick={() => {
-                                      setParticipants((prev) => prev.filter((item) => item.id !== p.id));
-                                      setOpenMenuId(null);
-                                    }}
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '0.6rem',
-                                      padding: '0.5rem 0.75rem',
-                                      borderRadius: '6px',
-                                      border: 'none',
-                                      background: 'transparent',
-                                      color: '#ef4444',
-                                      fontSize: '0.85rem',
-                                      fontWeight: 600,
-                                      cursor: 'pointer',
-                                      width: '100%',
-                                      textAlign: 'left'
-                                    }}
-                                  >
-                                    <Trash2 size={14} /> Delete Participant
-                                  </button>
-                                </>
-                              )}
+                              <button
+                                onClick={() => {
+                                  setDeletingParticipant(p);
+                                  setOpenMenuId(null);
+                                }}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.6rem',
+                                  padding: '0.5rem 0.75rem',
+                                  borderRadius: '6px',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  color: '#ef4444',
+                                  fontSize: '0.85rem',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  width: '100%',
+                                  textAlign: 'left'
+                                }}
+                              >
+                                <Trash2 size={14} /> Delete Participant
+                              </button>
                             </div>
                           </>
                         )}
@@ -556,7 +609,7 @@ export default function Participants({
                       <td>
                         <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>{prg.stage}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                          <Clock size={12} /> {prg.time}
+                          <Clock size={12} /> {prg.time || 'Not Assigned'}
                         </div>
                       </td>
                       <td>
@@ -684,12 +737,12 @@ export default function Participants({
                           </span>
                         </div>
                         <div style={{ fontSize: '0.785rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
-                          Stage: {prg.stage} • Time: {prg.time} • Judge: {prg.judge}
+                          Stage: {prg.stage} • Time: {prg.time || 'Not Assigned'} • Judge: {prg.judge || 'Unassigned'}
                         </div>
                       </div>
 
                       <div style={{ textAlign: 'right' }}>
-                        {me && (prg.status === 'Published' || userRole === 'Admin') ? (
+                        {me && (prg.status === 'Published' || userRole === 'Admin' || userRole === 'Judge') ? (
                           <div>
                             <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fbbf24' }}>
                               {me.totalScore} / 50
@@ -699,9 +752,20 @@ export default function Participants({
                             </div>
                           </div>
                         ) : (
-                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                            {me ? 'Marks Hidden' : 'Evaluation Pending'}
-                          </span>
+                          <div style={{ textAlign: 'right' }}>
+                            {me ? (
+                              <div>
+                                <span style={{ fontSize: '0.75rem', color: '#d97706', background: '#fef3c7', padding: '0.2rem 0.55rem', borderRadius: '4px', fontWeight: 700, border: '1px solid #fde68a' }}>
+                                  Result Pending
+                                </span>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>Awaiting Admin Release</div>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                Evaluation Pending
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -710,7 +774,18 @@ export default function Participants({
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{ color: '#ef4444', borderColor: '#fecaca', background: '#fef2f2', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                onClick={() => {
+                  const toDelete = viewingParticipantModal;
+                  setViewingParticipantModal(null);
+                  setDeletingParticipant(toDelete);
+                }}
+              >
+                <Trash2 size={15} /> Delete Participant
+              </button>
               <button className="btn btn-secondary" onClick={() => setViewingParticipantModal(null)}>
                 Close Window
               </button>
@@ -756,7 +831,7 @@ export default function Participants({
                 </div>
                 <div>
                   <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.725rem' }}>SCHEDULED TIME</span>
-                  <strong style={{ color: 'var(--accent-cyan)' }}>{viewingProgramModal.time}</strong>
+                  <strong style={{ color: 'var(--accent-cyan)' }}>{viewingProgramModal.time || 'Not Assigned'}</strong>
                 </div>
                 <div>
                   <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.725rem' }}>ASSIGNED JUDGE</span>
@@ -800,7 +875,7 @@ export default function Participants({
                       </div>
 
                       <div>
-                        {me && (viewingProgramModal.status === 'Published' || userRole === 'Admin') ? (
+                        {me && (viewingProgramModal.status === 'Published' || userRole === 'Admin' || userRole === 'Judge') ? (
                           <div style={{ textAlign: 'right' }}>
                             <span style={{ fontWeight: 800, color: '#fbbf24', fontSize: '0.95rem' }}>
                               {me.totalScore} Pts
@@ -808,9 +883,17 @@ export default function Participants({
                             <div style={{ fontSize: '0.725rem', color: '#34d399' }}>Grade {me.grade}</div>
                           </div>
                         ) : (
-                          <span style={{ fontSize: '0.785rem', color: 'var(--text-muted)' }}>
-                            {me ? 'Marks Hidden' : 'Not Evaluated'}
-                          </span>
+                          <div style={{ textAlign: 'right' }}>
+                            {me ? (
+                              <span style={{ fontSize: '0.75rem', color: '#d97706', background: '#fef3c7', padding: '0.2rem 0.55rem', borderRadius: '4px', fontWeight: 700, border: '1px solid #fde68a' }}>
+                                Result Pending
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.785rem', color: 'var(--text-muted)' }}>
+                                Not Evaluated
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -876,12 +959,17 @@ export default function Participants({
                     <label className="form-label">Assign Team *</label>
                     <select
                       className="select-field"
-                      value={newParticipant.teamId}
+                      value={userRole === 'Manager' && activeManagerTeam ? activeManagerTeam.id : newParticipant.teamId}
+                      disabled={userRole === 'Manager'}
                       onChange={(e) => setNewParticipant({ ...newParticipant, teamId: e.target.value })}
                     >
-                      {teams.map((t) => (
-                        <option key={t.id} value={t.id}>{t.icon} {t.name}</option>
-                      ))}
+                      {userRole === 'Manager' && activeManagerTeam ? (
+                        <option value={activeManagerTeam.id}>{activeManagerTeam.icon} {activeManagerTeam.name}</option>
+                      ) : (
+                        teams.map((t) => (
+                          <option key={t.id} value={t.id}>{t.icon} {t.name}</option>
+                        ))
+                      )}
                     </select>
                   </div>
 
@@ -900,15 +988,35 @@ export default function Participants({
                 </div>
 
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label">Select Programs to Assign</label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.35rem' }}>
+                    <label className="form-label" style={{ margin: 0 }}>Select Programs to Assign</label>
+                    <span
+                      style={{
+                        fontSize: '0.78rem',
+                        fontWeight: 800,
+                        padding: '0.15rem 0.5rem',
+                        borderRadius: '4px',
+                        background: newPartIndivCount >= 4 ? '#dcfce7' : '#eff6ff',
+                        color: newPartIndivCount >= 4 ? '#166534' : '#1d4ed8',
+                        border: `1px solid ${newPartIndivCount >= 4 ? '#86efac' : '#bfdbfe'}`,
+                      }}
+                    >
+                      Individual: {newPartIndivCount} / 4 {newPartIndivCount >= 4 ? '(Max Reached)' : ''}
+                    </span>
+                  </div>
+
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto', padding: '0.5rem', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-input)' }}>
                     {programs.map((prg) => {
                       const isSelected = newParticipant.selectedPrograms.includes(prg.id);
+                      const isIndiv = isIndividualProgram(prg);
+                      const isMaxReached = isIndiv && !isSelected && newPartIndivCount >= 4;
+
                       return (
                         <button
                           type="button"
                           key={prg.id}
-                          onClick={() => toggleProgramInForm(prg.id)}
+                          disabled={isMaxReached}
+                          onClick={() => !isMaxReached && toggleProgramInForm(prg.id)}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -919,13 +1027,20 @@ export default function Participants({
                             background: isSelected ? 'rgba(99, 102, 241, 0.25)' : 'rgba(255,255,255,0.03)',
                             color: isSelected ? '#fff' : 'var(--text-secondary)',
                             fontSize: '0.8rem',
-                            cursor: 'pointer',
+                            cursor: isMaxReached ? 'not-allowed' : 'pointer',
+                            opacity: isMaxReached ? 0.5 : 1,
                             textAlign: 'left'
                           }}
                         >
-                          <input type="checkbox" checked={isSelected} readOnly />
-                          <div>
-                            <strong>{prg.code}</strong> - {prg.name}
+                          <input type="checkbox" checked={isSelected} disabled={isMaxReached} readOnly />
+                          <div style={{ flex: 1 }}>
+                            <div>
+                              <strong>{prg.code}</strong> - {prg.name}
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: isIndiv ? '#34d399' : '#a78bfa' }}>
+                              {isIndiv ? 'Individual' : 'Group'}
+                              {isMaxReached && ' • Max 4'}
+                            </div>
                           </div>
                         </button>
                       );
@@ -943,6 +1058,40 @@ export default function Participants({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {deletingParticipant && (
+        <div className="modal-overlay" onClick={() => setDeletingParticipant(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="modal-header" style={{ borderBottom: 'none' }}>
+              <h3 style={{ fontSize: '1.2rem', margin: 0, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Trash2 size={20} /> Delete Participant
+              </h3>
+              <button style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }} onClick={() => setDeletingParticipant(null)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', paddingTop: 0 }}>
+              <p style={{ margin: 0, color: 'var(--text-main)', fontSize: '0.95rem' }}>
+                Are you sure you want to delete participant <strong>"{deletingParticipant.name}"</strong> (Chest #{deletingParticipant.chestNo})?
+              </p>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                This action will permanently delete this participant from the system and remove all their competition enrollments and marks.
+              </p>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setDeletingParticipant(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" style={{ background: '#ef4444', borderColor: '#ef4444' }} onClick={handleConfirmDelete}>
+                Confirm Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

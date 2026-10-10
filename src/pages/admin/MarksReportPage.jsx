@@ -3,7 +3,7 @@ import { useApp } from '../../context/AppContext';
 import MarksReportView from '../../components/MarksReportView';
 
 export default function MarksReportPage() {
-  const { programs, participants, teams, markEntries } = useApp();
+  const { programs, participants, teams, markEntries, toggleProgramPublish } = useApp();
 
   return (
     <MarksReportView
@@ -11,6 +11,7 @@ export default function MarksReportPage() {
       participants={participants}
       teams={teams}
       markEntries={markEntries}
+      onTogglePublish={toggleProgramPublish}
     />
   );
 }

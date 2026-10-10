@@ -9,7 +9,11 @@ const getInitialAuth = () => {
     const raw = localStorage.getItem('eduvenza_auth_session');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.user) return parsed;
+      if (parsed && parsed.user) {
+        if (parsed.role === 'Team Manager') parsed.role = 'Manager';
+        if (parsed.user.role === 'Team Manager') parsed.user.role = 'Manager';
+        return parsed;
+      }
     }
   } catch (e) {
     console.error('Failed to parse saved auth session:', e);
@@ -34,7 +38,18 @@ export function AppProvider({ children }) {
   const [markEntries, setMarkEntries] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [judges, setJudges] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Clear any stale localStorage data keys — all data now lives in Supabase only
+  useEffect(() => {
+    const dataKeys = [
+      'eduvenza_teams', 'eduvenza_managers', 'eduvenza_participants',
+      'eduvenza_programs', 'eduvenza_activities', 'eduvenza_mark_entries',
+      'eduvenza_profiles', 'eduvenza_announcements', 'eduvenza_judges',
+    ];
+    dataKeys.forEach((k) => localStorage.removeItem(k));
+  }, []);
 
   // Load Initial Data from Database / Storage on Mount
   useEffect(() => {
@@ -50,6 +65,7 @@ export function AppProvider({ children }) {
           fetchedMarkEntries,
           fetchedProfiles,
           fetchedAnnouncements,
+          fetchedJudges,
         ] = await Promise.all([
           dbService.fetchTeams(),
           dbService.fetchManagers(),
@@ -59,6 +75,7 @@ export function AppProvider({ children }) {
           dbService.fetchMarkEntries(),
           dbService.fetchProfiles(),
           dbService.fetchAnnouncements(),
+          dbService.fetchJudges(),
         ]);
 
         setTeams(fetchedTeams);
@@ -68,6 +85,27 @@ export function AppProvider({ children }) {
         setActivities(fetchedActivities);
         setMarkEntries(fetchedMarkEntries);
         setProfiles(fetchedProfiles);
+
+        if (fetchedJudges && fetchedJudges.length > 0) {
+          setJudges(fetchedJudges);
+        } else {
+          const defaultJudge = {
+            id: 'judge-default',
+            name: 'Official Fest Judge',
+            username: 'Eduvanza.juges@gmail.in',
+            email: 'Eduvanza.juges@gmail.in',
+            password: 'judges@#345',
+            phone: '+91 9876543210',
+            specialization: 'General Competitions',
+            status: 'Active',
+            role: 'Judge',
+            avatar: '',
+            assignedPrograms: [],
+            createdOn: new Date().toISOString().split('T')[0],
+          };
+          setJudges([defaultJudge]);
+          dbService.insertJudge(defaultJudge);
+        }
         if (fetchedAnnouncements && fetchedAnnouncements.length > 0) {
           setAnnouncements(fetchedAnnouncements);
         } else {
@@ -93,28 +131,18 @@ export function AppProvider({ children }) {
     loadInitialData();
   }, []);
 
-  // Save to LocalStorage whenever state updates (for offline/fallback sync)
-  useEffect(() => {
-    dbService.saveLocalAll({
-      teams,
-      managers,
-      participants,
-      programs,
-      activities,
-      markEntries,
-      profiles,
-      announcements,
-    });
-  }, [teams, managers, participants, programs, activities, markEntries, profiles, announcements]);
+
 
   // Manager's assigned team helper
   const activeManagerTeam =
     teams.find(
       (t) =>
-        (currentUser?.teamId && t.id === currentUser.teamId) ||
-        (currentUser?.name && t.manager === currentUser.name)
+        ((currentUser?.teamId || currentUser?.team_id) && t.id === (currentUser.teamId || currentUser.team_id)) ||
+        (currentUser?.name && (t.manager === currentUser.name || t.manager === currentUser.username)) ||
+        (currentUser?.teamName && t.name === currentUser.teamName) ||
+        (currentUser?.team_name && t.name === currentUser.team_name)
     ) ||
-    teams.find((t) => t.id === 'team-gujarat') ||
+    teams.find((t) => t.id === 'team-gujarat' || t.name?.toLowerCase().includes('gujarat')) ||
     teams[0] ||
     null;
 
@@ -162,7 +190,51 @@ export function AppProvider({ children }) {
       return { role: 'Admin', user: finalProfile };
     }
 
-    // 2. Check if Team Manager account (created by Admin)
+    // 2. Check if Judge account (hardcoded default or any created judge)
+    const existingJudge = judges.find(
+      (j) => j.username?.toLowerCase() === lowerUser || j.email?.toLowerCase() === lowerUser
+    );
+
+    if (existingJudge || lowerUser === 'eduvanza.juges@gmail.in') {
+      const expectedPassword = existingJudge?.password || 'judges@#345';
+      if (password !== expectedPassword) {
+        throw new Error('Invalid username or password');
+      }
+
+      const existingProfile = profiles.find(
+        (p) => p.username?.toLowerCase() === lowerUser
+      );
+
+      const judgeProfile = {
+        id: existingJudge?.id || existingProfile?.id || 'prof-judge',
+        username: existingJudge?.username || cleanUsername,
+        password: password,
+        name: existingJudge?.name || existingProfile?.name || 'Judge',
+        role: 'Judge',
+        email: existingJudge?.email || existingProfile?.email || cleanUsername,
+        phone: existingJudge?.phone || '',
+        specialization: existingJudge?.specialization || 'General Competitions',
+        avatar: existingJudge?.avatar || existingProfile?.avatar || '',
+        lastLogin: new Date().toISOString(),
+      };
+
+      const saved = await dbService.upsertProfile(judgeProfile);
+      const finalProfile = saved || judgeProfile;
+
+      const session = {
+        role: 'Judge',
+        user: finalProfile,
+        timestamp: Date.now(),
+      };
+      localStorage.setItem('eduvenza_auth_session', JSON.stringify(session));
+
+      setUserRole('Judge');
+      setCurrentUser(finalProfile);
+      setIsAuthenticated(true);
+      return { role: 'Judge', user: finalProfile };
+    }
+
+    // 3. Check if Team Manager / other accounts (created by Admin or in DB)
     const existingManager = managers.find(
       (m) => m.username?.toLowerCase() === lowerUser
     );
@@ -171,42 +243,44 @@ export function AppProvider({ children }) {
     );
 
     if (existingManager || existingProfile || lowerUser === 'gujarat_mgr') {
-      const targetMgr = existingManager || existingProfile || {};
+      const targetUser = existingManager || existingProfile || {};
 
-      // If password was set by Admin, verify it (if provided)
-      if (targetMgr.password && targetMgr.password !== password) {
+      // If password was set, verify it
+      if (targetUser.password && targetUser.password !== password) {
         throw new Error('Invalid username or password');
       }
 
-      const mgrName = targetMgr.name || `${cleanUsername} Manager`;
-      const managerProfile = {
-        id: targetMgr.id || `mgr-${lowerUser}`,
+      let role = targetUser.role || 'Manager';
+      if (role === 'Team Manager') role = 'Manager';
+      const userName = targetUser.name || `${cleanUsername} ${role}`;
+      const userProfile = {
+        id: targetUser.id || `usr-${lowerUser}`,
         username: cleanUsername,
         password: password,
-        name: mgrName,
-        role: 'Manager',
-        email: targetMgr.email || `${lowerUser}@eduvenza.org`,
-        avatar: targetMgr.avatar || '',
-        teamId: targetMgr.teamId || targetMgr.team_id || 'team-gujarat',
-        teamName: targetMgr.teamName || targetMgr.team_name || 'Gujarat Team',
-        campus: targetMgr.campus || 'Gujarat',
+        name: userName,
+        role: role,
+        email: targetUser.email || `${lowerUser}@eduvenza.org`,
+        avatar: targetUser.avatar || '',
+        teamId: targetUser.teamId || targetUser.team_id || '',
+        teamName: targetUser.teamName || targetUser.team_name || '',
+        campus: targetUser.campus || '',
         lastLogin: new Date().toISOString(),
       };
 
-      const saved = await dbService.upsertProfile(managerProfile);
-      const finalProfile = saved || managerProfile;
+      const saved = await dbService.upsertProfile(userProfile);
+      const finalProfile = saved || userProfile;
 
       const session = {
-        role: 'Manager',
+        role: role,
         user: finalProfile,
         timestamp: Date.now(),
       };
       localStorage.setItem('eduvenza_auth_session', JSON.stringify(session));
 
-      setUserRole('Manager');
+      setUserRole(role);
       setCurrentUser(finalProfile);
       setIsAuthenticated(true);
-      return { role: 'Manager', user: finalProfile };
+      return { role: role, user: finalProfile };
     }
 
     throw new Error('Invalid username or password');
@@ -226,7 +300,6 @@ export function AppProvider({ children }) {
     const targetUsername = role === 'Admin' ? 'admin' : currentUser?.username || 'manager';
     await login(role, targetUsername);
   };
-
   // --- DATA ACTIONS WITH DATABASE SYNC ---
 
   // Teams
@@ -428,8 +501,18 @@ export function AppProvider({ children }) {
       }
       return [...prev, entry];
     });
-
     await dbService.upsertMarkEntry(entry);
+  };
+
+  // Batch save: updates state once + upserts all to Supabase in parallel
+  const saveMarkEntries = async (entries) => {
+    if (!entries || entries.length === 0) return;
+    setMarkEntries((prev) => {
+      const map = new Map(prev.map((m) => [m.id, m]));
+      entries.forEach((e) => map.set(e.id, e));
+      return Array.from(map.values());
+    });
+    await Promise.all(entries.map((e) => dbService.upsertMarkEntry(e)));
   };
 
   const deleteMarkEntry = async (id) => {
@@ -541,6 +624,58 @@ export function AppProvider({ children }) {
     await dbService.deleteAnnouncement(id);
   };
 
+  // Judges CRUD
+  const addJudge = async (newJudge) => {
+    setJudges((prev) => [newJudge, ...prev]);
+    const newAct = {
+      id: `act-${Date.now()}`,
+      title: 'New judge appointed',
+      subtitle: `${newJudge.name} (${newJudge.specialization || 'Judge'})`,
+      time: 'Just now',
+      color: '#d97706',
+      icon: 'judge',
+    };
+    setActivities((prev) => [newAct, ...prev]);
+
+    await dbService.insertJudge(newJudge);
+    await dbService.insertActivity(newAct);
+  };
+
+  const updateJudge = async (updatedJudge) => {
+    setJudges((prev) =>
+      prev.map((j) => (j.id === updatedJudge.id ? { ...j, ...updatedJudge } : j))
+    );
+    const newAct = {
+      id: `act-${Date.now()}`,
+      title: 'Judge profile updated',
+      subtitle: `${updatedJudge.name}`,
+      time: 'Just now',
+      color: '#d97706',
+      icon: 'judge',
+    };
+    setActivities((prev) => [newAct, ...prev]);
+
+    await dbService.updateJudge(updatedJudge);
+    await dbService.insertActivity(newAct);
+  };
+
+  const deleteJudge = async (judgeId) => {
+    const target = judges.find((j) => j.id === judgeId);
+    setJudges((prev) => prev.filter((j) => j.id !== judgeId));
+    const newAct = {
+      id: `act-${Date.now()}`,
+      title: 'Judge removed',
+      subtitle: target ? target.name : `Judge ID ${judgeId}`,
+      time: 'Just now',
+      color: '#ef4444',
+      icon: 'judge',
+    };
+    setActivities((prev) => [newAct, ...prev]);
+
+    await dbService.deleteJudge(judgeId);
+    await dbService.insertActivity(newAct);
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -556,6 +691,11 @@ export function AppProvider({ children }) {
         profiles,
         announcements,
         setAnnouncements,
+        judges,
+        setJudges,
+        addJudge,
+        updateJudge,
+        deleteJudge,
         activeManagerTeam,
         isLoading,
         isSupabaseConfigured,
@@ -578,6 +718,7 @@ export function AppProvider({ children }) {
         updateProgram,
         deleteProgram,
         saveMarkEntry,
+        saveMarkEntries,
         deleteMarkEntry,
         toggleProgramPublish,
         setParticipants,

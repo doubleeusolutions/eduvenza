@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import {
   ClipboardList, Search, Trophy, ChevronDown, ChevronUp,
-  Star, Award, Filter, X
+  Star, Award, Filter, X, Scale
 } from 'lucide-react';
+import { getAggregatedProgramResults } from '../utils/evaluationRules';
 
 const GRADE_COLORS = {
   'A+': { bg: '#fef3c7', color: '#92400e' },
@@ -20,7 +21,13 @@ const POSITION_BADGES = {
   '3rd': { emoji: '🥉', bg: '#fed7aa', color: '#9a3412' },
 };
 
-export default function MarksReportView({ programs = [], participants = [], teams = [], markEntries = [] }) {
+export default function MarksReportView({
+  programs = [],
+  participants = [],
+  teams = [],
+  markEntries = [],
+  onTogglePublish,
+}) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProgram, setSelectedProgram] = useState('all');
   const [expandedPrograms, setExpandedPrograms] = useState({});
@@ -50,20 +57,21 @@ export default function MarksReportView({ programs = [], participants = [], team
       : null;
 
   const getEnrichedEntries = (prgId) => {
-    const entries = markEntries.filter((me) => me.programId === prgId);
-    return entries
-      .map((me) => {
-        const participant = participants.find((p) => p.id === me.participantId);
+    const prg = programs.find((p) => p.id === prgId);
+    const aggregated = getAggregatedProgramResults(markEntries, prgId, prg?.memberCount || 1);
+    return aggregated
+      .map((agg) => {
+        const participant = participants.find((p) => p.id === agg.participantId);
         const team = teams.find((t) => t.id === participant?.teamId);
-        return { ...me, participant, team };
+        return { ...agg, participant, team };
       })
       .filter((e) => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
-        return (
-          e.participant?.name?.toLowerCase().includes(q) ||
-          e.team?.name?.toLowerCase().includes(q)
-        );
+        const matchPart = e.participant?.name?.toLowerCase().includes(q);
+        const matchTeam = e.team?.name?.toLowerCase().includes(q);
+        const matchJudge = e.judgeBreakdown?.some((j) => (j.judgeName || '').toLowerCase().includes(q));
+        return matchPart || matchTeam || matchJudge;
       })
       .sort((a, b) => {
         const dir = sortConfig.direction === 'asc' ? 1 : -1;
@@ -231,21 +239,44 @@ export default function MarksReportView({ programs = [], participants = [], team
                     <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                       {prg.name}
                       <span style={{
-                        fontSize: '0.7rem', fontWeight: 700,
-                        background: prg.status === 'Published' ? '#fef3c7' : '#dcfce7',
-                        color: prg.status === 'Published' ? '#92400e' : '#166534',
-                        padding: '0.15rem 0.6rem', borderRadius: '999px',
-                        border: `1px solid ${prg.status === 'Published' ? '#fde68a' : '#bbf7d0'}`
+                        fontSize: '0.72rem', fontWeight: 700,
+                        background: prg.status === 'Published' ? '#fef3c7' : '#f1f5f9',
+                        color: prg.status === 'Published' ? '#92400e' : '#475569',
+                        padding: '0.2rem 0.65rem', borderRadius: '999px',
+                        border: `1px solid ${prg.status === 'Published' ? '#fde68a' : '#e2e8f0'}`,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem'
                       }}>
-                        {prg.status}
+                        {prg.status === 'Published' ? '📢 Published (Visible to All)' : '🔒 Unpublished (Admin Only)'}
                       </span>
                     </div>
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                      Judge: {prg.judge || 'Unassigned'} &nbsp;•&nbsp; Max: {prg.maxMarks || 50} marks &nbsp;•&nbsp; {prg.type || 'Individual'} &nbsp;•&nbsp; {entries.length} evaluated
+                      Judges: <strong style={{ color: 'var(--text-main)' }}>{prg.judge || 'Unassigned'}</strong> &nbsp;•&nbsp; Max: {prg.maxMarks || 50} marks &nbsp;•&nbsp; {prg.type || 'Individual'} &nbsp;•&nbsp; {entries.length} student{entries.length === 1 ? '' : 's'} evaluated {entries.some(e => e.isMultiJudge) ? '• (Multi-Judge Averaged)' : ''}
                     </div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  {onTogglePublish && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTogglePublish(prg.id);
+                      }}
+                      style={{
+                        fontSize: '0.75rem',
+                        padding: '0.3rem 0.65rem',
+                        fontWeight: 700,
+                        background: prg.status === 'Published' ? '#fef3c7' : 'var(--primary)',
+                        color: prg.status === 'Published' ? '#92400e' : '#ffffff',
+                        border: `1px solid ${prg.status === 'Published' ? '#fde68a' : 'transparent'}`,
+                      }}
+                    >
+                      {prg.status === 'Published' ? 'Unpublish' : 'Publish Result'}
+                    </button>
+                  )}
                   {entries.length > 0 && (
                     <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--primary)' }}>{entries.length} entries</span>
                   )}
@@ -285,84 +316,151 @@ export default function MarksReportView({ programs = [], participants = [], team
                         {entries.map((entry, idx) => {
                           const gradeStyle = GRADE_COLORS[entry.grade] || { bg: '#f1f5f9', color: '#475569' };
                           const posStyle = POSITION_BADGES[entry.position];
+                          const judgesList = entry.judgeBreakdown || [];
+
                           return (
-                            <tr key={entry.id || idx}>
-                              <td style={{ textAlign: 'center' }}>
-                                {posStyle ? (
-                                  <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '50%', background: posStyle.bg, fontSize: '1.1rem' }}>
-                                    {posStyle.emoji}
+                            <React.Fragment key={entry.id || idx}>
+                              {/* Main Student Row */}
+                              <tr style={{ background: entry.isMultiJudge ? '#ffffff' : '#ffffff', borderTop: idx > 0 ? '1px solid var(--border-light)' : 'none' }}>
+                                <td style={{ textAlign: 'center' }}>
+                                  {posStyle ? (
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '50%', background: posStyle.bg, fontSize: '1.1rem' }}>
+                                      {posStyle.emoji}
+                                    </div>
+                                  ) : (
+                                    <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>{entry.position || '—'}</span>
+                                  )}
+                                </td>
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: '#fff', fontSize: '0.8rem', flexShrink: 0 }}>
+                                      {entry.participant?.name?.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div style={{ fontWeight: 700, color: 'var(--text-main)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <span>{entry.participant?.name || 'Unknown'}</span>
+                                        {entry.isMultiJudge && (
+                                          <span style={{ fontSize: '0.68rem', fontWeight: 800, color: '#1d4ed8', background: '#eff6ff', padding: '0.1rem 0.4rem', borderRadius: '4px', border: '1px solid #bfdbfe' }}>
+                                            {entry.judgeCount} Judges
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Chest #{entry.participant?.chestNo} &nbsp;•&nbsp; {entry.participant?.category}</div>
+                                    </div>
                                   </div>
-                                ) : (
-                                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>{entry.position || '—'}</span>
-                                )}
-                              </td>
-                              <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: '#fff', fontSize: '0.8rem', flexShrink: 0 }}>
-                                    {entry.participant?.name?.charAt(0).toUpperCase()}
+                                </td>
+                                <td>
+                                  <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '0.875rem' }}>{entry.team?.name || '—'}</div>
+                                  {entry.team?.campus && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{entry.team.campus}</div>}
+                                </td>
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                    <Star size={13} fill="#eab308" color="#eab308" />
+                                    <span style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--text-main)' }}>{entry.totalScore}</span>
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>/ {prg.maxMarks || 50}</span>
+                                    {entry.isMultiJudge && (
+                                      <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                                        (Avg)
+                                      </span>
+                                    )}
                                   </div>
-                                  <div>
-                                    <div style={{ fontWeight: 700, color: 'var(--text-main)', fontSize: '0.9rem' }}>{entry.participant?.name || 'Unknown'}</div>
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Chest #{entry.participant?.chestNo} &nbsp;•&nbsp; {entry.participant?.category}</div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td>
-                                <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '0.875rem' }}>{entry.team?.name || '—'}</div>
-                                {entry.team?.campus && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{entry.team.campus}</div>}
-                              </td>
-                              <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                  <Star size={13} fill="#eab308" color="#eab308" />
-                                  <span style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--text-main)' }}>{entry.totalScore}</span>
-                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>/ {prg.maxMarks || 50}</span>
-                                </div>
-                              </td>
-                              <td>
-                                <span style={{ background: gradeStyle.bg, color: gradeStyle.color, padding: '0.25rem 0.75rem', borderRadius: '999px', fontWeight: 800, fontSize: '0.85rem', border: `1px solid ${gradeStyle.color}33` }}>
-                                  {entry.grade || '—'}
-                                </span>
-                              </td>
-                              {/* Grade Points */}
-                              <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                  <span style={{
-                                    background: '#fef3c7', color: '#92400e',
-                                    padding: '0.2rem 0.6rem', borderRadius: '999px',
-                                    fontWeight: 700, fontSize: '0.85rem',
-                                    border: '1px solid #fde68a'
-                                  }}>
-                                    {entry.gradePoints ?? 0} pts
+                                </td>
+                                <td>
+                                  <span style={{ background: gradeStyle.bg, color: gradeStyle.color, padding: '0.25rem 0.75rem', borderRadius: '999px', fontWeight: 800, fontSize: '0.85rem', border: `1px solid ${gradeStyle.color}33` }}>
+                                    {entry.grade || '—'}
                                   </span>
-                                </div>
-                              </td>
-                              {/* Position Points */}
-                              <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                  <span style={{
-                                    background: entry.positionPoints > 0 ? '#eff6ff' : '#f1f5f9',
-                                    color: entry.positionPoints > 0 ? '#1e40af' : '#94a3b8',
-                                    padding: '0.2rem 0.6rem', borderRadius: '999px',
-                                    fontWeight: 700, fontSize: '0.85rem',
-                                    border: `1px solid ${entry.positionPoints > 0 ? '#bfdbfe' : '#e2e8f0'}`
-                                  }}>
-                                    {entry.positionPoints ?? 0} pts
+                                </td>
+                                {/* Grade Points */}
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <span style={{
+                                      background: '#fef3c7', color: '#92400e',
+                                      padding: '0.2rem 0.6rem', borderRadius: '999px',
+                                      fontWeight: 700, fontSize: '0.85rem',
+                                      border: '1px solid #fde68a'
+                                    }}>
+                                      {entry.gradePoints ?? 0} pts
+                                    </span>
+                                  </div>
+                                </td>
+                                {/* Position Points */}
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <span style={{
+                                      background: entry.positionPoints > 0 ? '#eff6ff' : '#f1f5f9',
+                                      color: entry.positionPoints > 0 ? '#1e40af' : '#94a3b8',
+                                      padding: '0.2rem 0.6rem', borderRadius: '999px',
+                                      fontWeight: 700, fontSize: '0.85rem',
+                                      border: `1px solid ${entry.positionPoints > 0 ? '#bfdbfe' : '#e2e8f0'}`
+                                    }}>
+                                      {entry.positionPoints ?? 0} pts
+                                    </span>
+                                  </div>
+                                </td>
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <Award size={14} color="#8b5cf6" />
+                                    <span style={{ fontWeight: 700, color: '#8b5cf6', fontSize: '0.95rem' }}>{entry.teamPoints ?? '—'}</span>
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>pts</span>
+                                  </div>
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                    {entry.position || '—'}
                                   </span>
-                                </div>
-                              </td>
-                              <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                  <Award size={14} color="#8b5cf6" />
-                                  <span style={{ fontWeight: 700, color: '#8b5cf6', fontSize: '0.95rem' }}>{entry.teamPoints ?? '—'}</span>
-                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>pts</span>
-                                </div>
-                              </td>
-                              <td style={{ textAlign: 'center' }}>
-                                <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                  {entry.rank ? `#${entry.rank}` : '—'}
-                                </span>
-                              </td>
-                            </tr>
+                                </td>
+                              </tr>
+
+                              {/* Judge Rows: Give rows for judges name-mark */}
+                              {judgesList.map((j, jIdx) => {
+                                const jGradeStyle = GRADE_COLORS[j.grade] || { bg: '#f1f5f9', color: '#475569' };
+                                const isLastJudge = jIdx === judgesList.length - 1;
+                                return (
+                                  <tr
+                                    key={`${entry.id}-judge-${jIdx}`}
+                                    style={{
+                                      background: '#f8fafc',
+                                      borderBottom: isLastJudge ? '2px solid #e2e8f0' : '1px dashed #e2e8f0',
+                                    }}
+                                  >
+                                    <td style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>
+                                      ↳
+                                    </td>
+                                    <td colSpan={2}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '0.75rem' }}>
+                                        <span style={{ fontSize: '0.85rem' }}>⚖️</span>
+                                        <span style={{ fontWeight: 800, fontSize: '0.825rem', color: 'var(--text-main)' }}>
+                                          {j.judgeName}
+                                        </span>
+                                        {j.notes && (
+                                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                            — "{j.notes}"
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                        <span style={{ fontWeight: 800, fontSize: '0.92rem', color: '#b45309' }}>
+                                          {j.mark}
+                                        </span>
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>/ {prg.maxMarks || 50}</span>
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <span style={{ background: jGradeStyle.bg, color: jGradeStyle.color, padding: '0.15rem 0.55rem', borderRadius: '4px', fontWeight: 800, fontSize: '0.75rem', border: `1px solid ${jGradeStyle.color}33` }}>
+                                        {j.grade || '—'}
+                                      </span>
+                                    </td>
+                                    <td colSpan={4}>
+                                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                                        Individual Judge Mark
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
                           );
                         })}
                       </tbody>

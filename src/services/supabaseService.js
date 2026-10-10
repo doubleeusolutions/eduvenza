@@ -1,37 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-// Local storage helper fallback keys
-const STORAGE_KEYS = {
-  teams: 'eduvenza_teams',
-  managers: 'eduvenza_managers',
-  participants: 'eduvenza_participants',
-  programs: 'eduvenza_programs',
-  activities: 'eduvenza_activities',
-  markEntries: 'eduvenza_mark_entries',
-  profiles: 'eduvenza_profiles',
-  announcements: 'eduvenza_announcements',
-};
-
-// Helper: load from localStorage
-const getLocal = (key) => {
-  try {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : [];
-  } catch (e) {
-    console.error(`Error reading ${key} from localStorage`, e);
-    return [];
-  }
-};
-
-// Helper: save to localStorage
-const setLocal = (key, data) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch (e) {
-    console.error(`Error saving ${key} to localStorage`, e);
-  }
-};
-
 // --- DATA TRANSFORMERS ---
 
 const mapProfileToJS = (row) => ({
@@ -161,23 +129,30 @@ const mapProgramToJS = (row) => ({
   status: row.status,
   judge: row.judge,
   criteria: row.criteria || [{ name: 'Earned Mark', max: 50 }],
+  codeLetters: row.code_letters || row.codeLetters || {},
 });
 
-const mapProgramToDB = (prg) => ({
-  id: prg.id,
-  code: prg.code,
-  name: prg.name,
-  category: prg.category,
-  type: prg.type,
-  member_count: prg.memberCount,
-  venue: prg.venue,
-  date: prg.date,
-  time: prg.time,
-  max_marks: prg.maxMarks,
-  status: prg.status,
-  judge: prg.judge,
-  criteria: prg.criteria,
-});
+const mapProgramToDB = (prg) => {
+  const payload = {
+    id: prg.id,
+    code: prg.code,
+    name: prg.name,
+    category: prg.category,
+    type: prg.type,
+    member_count: prg.memberCount,
+    venue: prg.venue,
+    date: prg.date,
+    time: prg.time,
+    max_marks: prg.maxMarks,
+    status: prg.status,
+    judge: prg.judge,
+    criteria: prg.criteria,
+  };
+  if (prg.codeLetters !== undefined) {
+    payload.code_letters = prg.codeLetters;
+  }
+  return payload;
+};
 
 const mapActivityToJS = (row) => ({
   id: row.id,
@@ -209,13 +184,19 @@ const mapMarkEntryToJS = (row) => ({
   positionPoints: row.position_points ?? row.positionPoints ?? 0,
   teamPoints: row.team_points ?? row.teamPoints ?? 0,
   enteredAt: row.entered_at || row.enteredAt,
+  judgeName: row.judge_name || row.judgeName,
+  judgeNotes: row.judge_notes || row.judgeNotes,
+  codeLetter: row.code_letter || row.codeLetter || row.scores?.codeLetter || '',
 });
 
 const mapMarkEntryToDB = (me) => ({
   id: me.id,
   program_id: me.programId,
   participant_id: me.participantId,
-  scores: me.scores,
+  scores: {
+    ...(me.scores || {}),
+    codeLetter: me.codeLetter || me.scores?.codeLetter || '',
+  },
   total_score: me.totalScore,
   grade: me.grade,
   position: me.position,
@@ -223,6 +204,8 @@ const mapMarkEntryToDB = (me) => ({
   position_points: me.positionPoints,
   team_points: me.teamPoints,
   entered_at: me.enteredAt,
+  judge_name: me.judgeName,
+  judge_notes: me.judgeNotes,
 });
 
 const mapAnnouncementToJS = (row) => ({
@@ -243,535 +226,356 @@ const mapAnnouncementToDB = (ann) => ({
   author: ann.author,
 });
 
-// --- SERVICE METHODS ---
+const mapJudgeToJS = (row) => ({
+  id: row.id,
+  name: row.name,
+  username: row.username,
+  password: row.password,
+  email: row.email || `${row.username}@eduvenza.com`,
+  phone: row.phone || '',
+  specialization: row.specialization || 'General Competitions',
+  role: 'Judge',
+  avatar: row.avatar || '',
+  status: row.status || 'Active',
+  assignedPrograms: Array.isArray(row.assigned_programs)
+    ? row.assigned_programs
+    : Array.isArray(row.assignedPrograms)
+    ? row.assignedPrograms
+    : [],
+  createdOn: row.created_at || row.createdOn || new Date().toISOString().split('T')[0],
+});
+
+const mapJudgeToDB = (j) => ({
+  id: j.id,
+  name: j.name,
+  username: j.username,
+  password: j.password,
+  email: j.email,
+  phone: j.phone,
+  specialization: j.specialization,
+  role: 'Judge',
+  avatar: j.avatar,
+  status: j.status || 'Active',
+  assigned_programs: j.assignedPrograms || [],
+});
+
+// --- SERVICE METHODS (Supabase only — no localStorage) ---
 
 export const dbService = {
+
   // --- PROFILES ---
   async fetchProfiles() {
-    const local = getLocal(STORAGE_KEYS.profiles);
-    let remote = [];
-
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('profiles').select('*');
-      if (!error && data) {
-        remote = data.map(mapProfileToJS);
-      } else if (error) {
-        console.error('Supabase fetchProfiles error:', error);
-      }
-    }
-
-    const map = new Map();
-    local.forEach((p) => {
-      const key = p.username || p.id;
-      if (key) map.set(key, p);
-    });
-    remote.forEach((p) => {
-      const key = p.username || p.id;
-      if (key) {
-        const existing = map.get(key) || {};
-        map.set(key, { ...existing, ...p });
-      }
-    });
-
-    const result = Array.from(map.values());
-    if (result.length > 0) {
-      setLocal(STORAGE_KEYS.profiles, result);
-    }
-    return result;
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase.from('profiles').select('*');
+    if (error) { console.error('fetchProfiles error:', error); return []; }
+    return data.map(mapProfileToJS);
   },
 
   async fetchProfileByUsername(username) {
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('username', username)
-        .single();
-      if (!error && data) return mapProfileToJS(data);
-    }
-    const localProfiles = getLocal(STORAGE_KEYS.profiles);
-    return localProfiles.find((p) => p.username === username) || null;
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase
+      .from('profiles').select('*').eq('username', username).single();
+    if (error) return null;
+    return mapProfileToJS(data);
   },
 
   async upsertProfile(prof) {
+    if (!isSupabaseConfigured) return mapProfileToJS(mapProfileToDB(prof));
     const dbProfile = mapProfileToDB(prof);
-    const jsProfile = mapProfileToJS(dbProfile);
-
-    // 1. Immediately sync to LocalStorage
-    const localProfiles = getLocal(STORAGE_KEYS.profiles);
-    const existingIdx = localProfiles.findIndex(
-      (p) => p.username === prof.username || (p.id && p.id === prof.id)
-    );
-    if (existingIdx >= 0) {
-      localProfiles[existingIdx] = { ...localProfiles[existingIdx], ...jsProfile };
-    } else {
-      localProfiles.push(jsProfile);
-    }
-    setLocal(STORAGE_KEYS.profiles, localProfiles);
-
-    // 2. Sync to Supabase DB
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase
-        .from('profiles')
-        .upsert(dbProfile, { onConflict: 'username' })
-        .select();
-      if (error) {
-        console.error('Supabase upsertProfile error:', error);
-      } else if (data && data[0]) {
-        return mapProfileToJS(data[0]);
-      }
-    }
-
-    return jsProfile;
+    const { data, error } = await supabase
+      .from('profiles').upsert(dbProfile, { onConflict: 'username' }).select();
+    if (error) { console.error('upsertProfile error:', error); }
+    return data?.[0] ? mapProfileToJS(data[0]) : mapProfileToJS(dbProfile);
   },
 
   // --- TEAMS ---
   async fetchTeams() {
-    const local = getLocal(STORAGE_KEYS.teams);
-    let remote = [];
-
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('teams').select('*');
-      if (!error && data) {
-        remote = data.map(mapTeamToJS);
-      } else if (error) {
-        console.error('Supabase fetchTeams error:', error);
-      }
-    }
-
-    const map = new Map();
-    local.forEach((t) => {
-      if (t.id) map.set(t.id, t);
-    });
-    remote.forEach((t) => {
-      if (t.id) {
-        const existing = map.get(t.id) || {};
-        map.set(t.id, { ...existing, ...t });
-      }
-    });
-
-    const result = Array.from(map.values());
-    if (result.length > 0) {
-      setLocal(STORAGE_KEYS.teams, result);
-    }
-    return result;
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase.from('teams').select('*');
+    if (error) { console.error('fetchTeams error:', error); return []; }
+    return data.map(mapTeamToJS);
   },
 
   async insertTeam(team) {
-    const local = getLocal(STORAGE_KEYS.teams);
-    local.push(team);
-    setLocal(STORAGE_KEYS.teams, local);
-
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('teams').insert([mapTeamToDB(team)]);
-      if (error) console.error('Supabase insertTeam error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('teams').insert([mapTeamToDB(team)]);
+    if (error) console.error('insertTeam error:', error);
   },
 
   async updateTeam(team) {
-    const local = getLocal(STORAGE_KEYS.teams);
-    const idx = local.findIndex((t) => t.id === team.id);
-    if (idx >= 0) local[idx] = { ...local[idx], ...team };
-    setLocal(STORAGE_KEYS.teams, local);
-
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('teams').update(mapTeamToDB(team)).eq('id', team.id);
-      if (error) console.error('Supabase updateTeam error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('teams').update(mapTeamToDB(team)).eq('id', team.id);
+    if (error) console.error('updateTeam error:', error);
   },
 
   async deleteTeam(id) {
-    const local = getLocal(STORAGE_KEYS.teams);
-    const filtered = local.filter((t) => t.id !== id);
-    setLocal(STORAGE_KEYS.teams, filtered);
-
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('teams').delete().eq('id', id);
-      if (error) console.error('Supabase deleteTeam error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('teams').delete().eq('id', id);
+    if (error) console.error('deleteTeam error:', error);
   },
 
   // --- MANAGERS ---
   async fetchManagers() {
-    const local = getLocal(STORAGE_KEYS.managers);
-    let remote = [];
-
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('managers').select('*');
-      if (!error && data) {
-        remote = data.map(mapManagerToJS);
-      } else if (error) {
-        console.error('Supabase fetchManagers error:', error);
-      }
-    }
-
-    const map = new Map();
-    local.forEach((m) => {
-      const key = m.id || m.username;
-      if (key) map.set(key, m);
-    });
-    remote.forEach((m) => {
-      const key = m.id || m.username;
-      if (key) {
-        const existing = map.get(key) || {};
-        map.set(key, { ...existing, ...m });
-      }
-    });
-
-    const result = Array.from(map.values());
-    if (result.length > 0) {
-      setLocal(STORAGE_KEYS.managers, result);
-    }
-    return result;
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase.from('managers').select('*');
+    if (error) { console.error('fetchManagers error:', error); return []; }
+    return data.map(mapManagerToJS);
   },
 
   async insertManager(mgr) {
-    // 1. Save to LocalStorage immediately
-    const local = getLocal(STORAGE_KEYS.managers);
-    const existingIdx = local.findIndex(
-      (m) => m.id === mgr.id || (m.username && m.username === mgr.username)
-    );
-    if (existingIdx >= 0) {
-      local[existingIdx] = { ...local[existingIdx], ...mgr };
-    } else {
-      local.push(mgr);
+    if (!isSupabaseConfigured) return;
+    const payload = mapManagerToDB(mgr);
+    let { error } = await supabase.from('managers').upsert([payload], { onConflict: 'id' });
+
+    if (error && (error.code === 'PGRST204' || error.message?.includes('password'))) {
+      const { password, ...safe } = payload;
+      const res = await supabase.from('managers').upsert([safe], { onConflict: 'id' });
+      error = res.error;
     }
-    setLocal(STORAGE_KEYS.managers, local);
-
-    // 2. Save to Supabase DB
-    if (isSupabaseConfigured) {
-      const dbMgr = mapManagerToDB(mgr);
-      let payload = { ...dbMgr };
-
-      let { data, error } = await supabase
-        .from('managers')
-        .upsert([payload], { onConflict: 'id' })
-        .select();
-
-      // Fallback 1: If remote schema cache doesn't have 'password' column (PGRST204)
-      if (error && (error.code === 'PGRST204' || (error.message && error.message.includes('password')))) {
-        console.warn("Supabase 'managers' table missing 'password' column, retrying without password column...");
-        delete payload.password;
-        const res = await supabase
-          .from('managers')
-          .upsert([payload], { onConflict: 'id' })
-          .select();
-        error = res.error;
-        data = res.data;
-      }
-
-      // Fallback 2: If team_id foreign key constraint fails (23503)
-      if (error && error.code === '23503') {
-        console.warn('Team foreign key missing in Supabase. Upserting manager with team_id=null');
-        payload.team_id = null;
-        delete payload.password;
-        const res = await supabase
-          .from('managers')
-          .upsert([payload], { onConflict: 'id' })
-          .select();
-        error = res.error;
-        data = res.data;
-      }
-
-      if (error) {
-        console.error('Supabase insertManager error:', error);
-      } else {
-        console.log('Manager saved to Supabase successfully:', data);
-      }
+    if (error && error.code === '23503') {
+      const { password, ...safe } = payload;
+      safe.team_id = null;
+      const res = await supabase.from('managers').upsert([safe], { onConflict: 'id' });
+      error = res.error;
     }
+    if (error) console.error('insertManager error:', error);
   },
 
   async updateManager(mgr) {
-    const local = getLocal(STORAGE_KEYS.managers);
-    const idx = local.findIndex((m) => m.id === mgr.id || m.username === mgr.username);
-    if (idx >= 0) {
-      local[idx] = { ...local[idx], ...mgr };
-    } else {
-      local.push(mgr);
+    if (!isSupabaseConfigured) return;
+    const payload = mapManagerToDB(mgr);
+    let { error } = await supabase.from('managers').upsert([payload], { onConflict: 'id' });
+
+    if (error && (error.code === 'PGRST204' || error.message?.includes('password'))) {
+      const { password, ...safe } = payload;
+      const res = await supabase.from('managers').upsert([safe], { onConflict: 'id' });
+      error = res.error;
     }
-    setLocal(STORAGE_KEYS.managers, local);
-
-    if (isSupabaseConfigured) {
-      const dbMgr = mapManagerToDB(mgr);
-      let payload = { ...dbMgr };
-
-      let { data, error } = await supabase
-        .from('managers')
-        .upsert([payload], { onConflict: 'id' })
-        .select();
-
-      if (error && (error.code === 'PGRST204' || (error.message && error.message.includes('password')))) {
-        delete payload.password;
-        const res = await supabase
-          .from('managers')
-          .upsert([payload], { onConflict: 'id' })
-          .select();
-        error = res.error;
-        data = res.data;
-      }
-
-      if (error && error.code === '23503') {
-        payload.team_id = null;
-        delete payload.password;
-        const res = await supabase
-          .from('managers')
-          .upsert([payload], { onConflict: 'id' })
-          .select();
-        error = res.error;
-        data = res.data;
-      }
-
-      if (error) {
-        console.error('Supabase updateManager error:', error);
-      } else {
-        console.log('Manager updated in Supabase successfully:', data);
-      }
-    }
+    if (error) console.error('updateManager error:', error);
   },
 
   async deleteManager(id) {
-    const local = getLocal(STORAGE_KEYS.managers);
-    const filtered = local.filter((m) => m.id !== id && m.username !== id);
-    setLocal(STORAGE_KEYS.managers, filtered);
-
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('managers').delete().eq('id', id);
-      if (error) console.error('Supabase deleteManager error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('managers').delete().eq('id', id);
+    if (error) console.error('deleteManager error:', error);
   },
 
   // --- PARTICIPANTS ---
   async fetchParticipants() {
-    const local = getLocal(STORAGE_KEYS.participants);
-    let remote = [];
-
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('participants').select('*');
-      if (!error && data) {
-        remote = data.map(mapParticipantToJS);
-      } else if (error) {
-        console.error('Supabase fetchParticipants error:', error);
-      }
-    }
-
-    const map = new Map();
-    local.forEach((p) => {
-      const key = p.id || p.chestNo;
-      if (key) map.set(key, p);
-    });
-    remote.forEach((p) => {
-      const key = p.id || p.chestNo;
-      if (key) {
-        const existing = map.get(key) || {};
-        map.set(key, { ...existing, ...p });
-      }
-    });
-
-    const result = Array.from(map.values());
-    if (result.length > 0) {
-      setLocal(STORAGE_KEYS.participants, result);
-    }
-    return result;
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase.from('participants').select('*');
+    if (error) { console.error('fetchParticipants error:', error); return []; }
+    return data.map(mapParticipantToJS);
   },
 
   async insertParticipant(p) {
-    const local = getLocal(STORAGE_KEYS.participants);
-    const existingIdx = local.findIndex((item) => item.id === p.id);
-    if (existingIdx >= 0) {
-      local[existingIdx] = { ...local[existingIdx], ...p };
-    } else {
-      local.push(p);
+    if (!isSupabaseConfigured) return;
+    const payload = mapParticipantToDB(p);
+    let { error } = await supabase.from('participants').upsert([payload], { onConflict: 'id' });
+    if (error && error.code === '23503') {
+      payload.team_id = null;
+      const res = await supabase.from('participants').upsert([payload], { onConflict: 'id' });
+      error = res.error;
     }
-    setLocal(STORAGE_KEYS.participants, local);
-
-    if (isSupabaseConfigured) {
-      const dbP = mapParticipantToDB(p);
-      let payload = { ...dbP };
-
-      let { data, error } = await supabase
-        .from('participants')
-        .upsert([payload], { onConflict: 'id' })
-        .select();
-
-      if (error && error.code === '23503') {
-        console.warn('Team foreign key missing in Supabase. Upserting participant with team_id=null');
-        payload.team_id = null;
-        const res = await supabase
-          .from('participants')
-          .upsert([payload], { onConflict: 'id' })
-          .select();
-        error = res.error;
-        data = res.data;
-      }
-
-      if (error) {
-        console.error('Supabase insertParticipant error:', error);
-      } else {
-        console.log('Participant saved to Supabase successfully:', data);
-      }
-    }
+    if (error) console.error('insertParticipant error:', error);
   },
 
   async updateParticipant(p) {
-    const local = getLocal(STORAGE_KEYS.participants);
-    const idx = local.findIndex((item) => item.id === p.id);
-    if (idx >= 0) {
-      local[idx] = { ...local[idx], ...p };
-    } else {
-      local.push(p);
+    if (!isSupabaseConfigured) return;
+    const payload = mapParticipantToDB(p);
+    let { error } = await supabase.from('participants').upsert([payload], { onConflict: 'id' });
+    if (error && error.code === '23503') {
+      payload.team_id = null;
+      const res = await supabase.from('participants').upsert([payload], { onConflict: 'id' });
+      error = res.error;
     }
-    setLocal(STORAGE_KEYS.participants, local);
-
-    if (isSupabaseConfigured) {
-      const dbP = mapParticipantToDB(p);
-      let payload = { ...dbP };
-
-      let { data, error } = await supabase
-        .from('participants')
-        .upsert([payload], { onConflict: 'id' })
-        .select();
-
-      if (error && error.code === '23503') {
-        payload.team_id = null;
-        const res = await supabase
-          .from('participants')
-          .upsert([payload], { onConflict: 'id' })
-          .select();
-        error = res.error;
-        data = res.data;
-      }
-
-      if (error) {
-        console.error('Supabase updateParticipant error:', error);
-      } else {
-        console.log('Participant updated in Supabase successfully:', data);
-      }
-    }
+    if (error) console.error('updateParticipant error:', error);
   },
 
   async deleteParticipant(id) {
-    const local = getLocal(STORAGE_KEYS.participants);
-    const filtered = local.filter((p) => p.id !== id);
-    setLocal(STORAGE_KEYS.participants, filtered);
-
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('participants').delete().eq('id', id);
-      if (error) console.error('Supabase deleteParticipant error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('participants').delete().eq('id', id);
+    if (error) console.error('deleteParticipant error:', error);
   },
 
-  // --- PROGRAMS / COMPETITIONS ---
+  // --- PROGRAMS ---
   async fetchPrograms() {
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('programs').select('*');
-      if (!error && data) return data.map(mapProgramToJS);
-      console.error('Supabase fetchPrograms error:', error);
-    }
-    return getLocal(STORAGE_KEYS.programs);
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase.from('programs').select('*');
+    if (error) { console.error('fetchPrograms error:', error); return []; }
+    return data.map(mapProgramToJS);
   },
 
   async insertProgram(prg) {
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('programs').insert([mapProgramToDB(prg)]);
-      if (error) console.error('Supabase insertProgram error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('programs').insert([mapProgramToDB(prg)]);
+    if (error) console.error('insertProgram error:', error);
   },
 
   async updateProgram(prg) {
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('programs').update(mapProgramToDB(prg)).eq('id', prg.id);
-      if (error) console.error('Supabase updateProgram error:', error);
+    if (!isSupabaseConfigured) return;
+    const payload = mapProgramToDB(prg);
+    let { error } = await supabase.from('programs').update(payload).eq('id', prg.id);
+    if (error && (error.code === 'PGRST204' || error.message?.includes('code_letters'))) {
+      const { code_letters, ...safe } = payload;
+      const res = await supabase.from('programs').update(safe).eq('id', prg.id);
+      error = res.error;
     }
+    if (error) console.error('updateProgram error:', error);
   },
 
   async deleteProgram(id) {
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('programs').delete().eq('id', id);
-      if (error) console.error('Supabase deleteProgram error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('programs').delete().eq('id', id);
+    if (error) console.error('deleteProgram error:', error);
   },
 
   // --- ACTIVITIES ---
   async fetchActivities() {
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('activities').select('*').order('id', { ascending: false });
-      if (!error && data) return data.map(mapActivityToJS);
-      console.error('Supabase fetchActivities error:', error);
-    }
-    return getLocal(STORAGE_KEYS.activities);
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase
+      .from('activities').select('*').order('id', { ascending: false });
+    if (error) { console.error('fetchActivities error:', error); return []; }
+    return data.map(mapActivityToJS);
   },
 
   async insertActivity(act) {
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('activities').insert([mapActivityToDB(act)]);
-      if (error) console.error('Supabase insertActivity error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('activities').insert([mapActivityToDB(act)]);
+    if (error) console.error('insertActivity error:', error);
   },
 
   // --- MARK ENTRIES ---
   async fetchMarkEntries() {
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('mark_entries').select('*');
-      if (!error && data) return data.map(mapMarkEntryToJS);
-      console.error('Supabase fetchMarkEntries error:', error);
-    }
-    return getLocal(STORAGE_KEYS.markEntries);
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase.from('mark_entries').select('*');
+    if (error) { console.error('fetchMarkEntries error:', error); return []; }
+    return data.map(mapMarkEntryToJS);
   },
 
   async upsertMarkEntry(me) {
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('mark_entries').upsert(mapMarkEntryToDB(me));
-      if (error) console.error('Supabase upsertMarkEntry error:', error);
+    if (!isSupabaseConfigured) return;
+    const dbEntry = mapMarkEntryToDB(me);
+    let { error } = await supabase.from('mark_entries').upsert(dbEntry, { onConflict: 'id' });
+
+    // Fallback if judge_name/judge_notes columns don't exist yet — run supabase_update.sql!
+    if (error && (error.code === 'PGRST204' ||
+      error.message?.includes('judge_name') || error.message?.includes('judge_notes'))) {
+      console.warn('judge_name/judge_notes columns missing — run supabase_update.sql');
+      const { judge_name, judge_notes, ...safe } = dbEntry;
+      const res = await supabase.from('mark_entries').upsert(safe, { onConflict: 'id' });
+      error = res.error;
+    }
+
+    if (error) {
+      console.error('upsertMarkEntry error:', error);
+    } else {
+      console.log('✅ Mark entry saved → Supabase | ID:', me.id, '| Judge:', me.judgeName);
     }
   },
 
   async deleteMarkEntry(id) {
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('mark_entries').delete().eq('id', id);
-      if (error) console.error('Supabase deleteMarkEntry error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('mark_entries').delete().eq('id', id);
+    if (error) console.error('deleteMarkEntry error:', error);
   },
 
   // --- ANNOUNCEMENTS ---
   async fetchAnnouncements() {
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('announcements').select('*').order('created_at', { ascending: false });
-      if (!error && data) return data.map(mapAnnouncementToJS);
-      console.error('Supabase fetchAnnouncements error:', error);
-    }
-    return getLocal(STORAGE_KEYS.announcements);
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase
+      .from('announcements').select('*').order('created_at', { ascending: false });
+    if (error) { console.error('fetchAnnouncements error:', error); return []; }
+    return data.map(mapAnnouncementToJS);
   },
 
   async insertAnnouncement(ann) {
-    const local = getLocal(STORAGE_KEYS.announcements);
-    local.unshift(ann);
-    setLocal(STORAGE_KEYS.announcements, local);
-
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('announcements').insert([mapAnnouncementToDB(ann)]);
-      if (error) console.error('Supabase insertAnnouncement error:', error);
-    }
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('announcements').insert([mapAnnouncementToDB(ann)]);
+    if (error) console.error('insertAnnouncement error:', error);
   },
 
   async deleteAnnouncement(id) {
-    const local = getLocal(STORAGE_KEYS.announcements);
-    const filtered = local.filter((a) => a.id !== id);
-    setLocal(STORAGE_KEYS.announcements, filtered);
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from('announcements').delete().eq('id', id);
+    if (error) console.error('deleteAnnouncement error:', error);
+  },
 
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('announcements').delete().eq('id', id);
-      if (error) console.error('Supabase deleteAnnouncement error:', error);
+  // --- JUDGES ---
+  async fetchJudges() {
+    if (!isSupabaseConfigured) return [];
+
+    // Primary: judges table
+    const { data, error } = await supabase.from('judges').select('*');
+    if (!error && data && data.length > 0) return data.map(mapJudgeToJS);
+
+    // Fallback: profiles table with role = 'Judge'
+    const { data: profData } = await supabase.from('profiles').select('*').eq('role', 'Judge');
+    if (profData && profData.length > 0) {
+      return profData.map((p) => ({
+        id: p.id,
+        name: p.name,
+        username: p.username,
+        password: p.password,
+        email: p.email || p.username,
+        phone: p.phone || '',
+        specialization: p.specialization || 'General Competitions',
+        role: 'Judge',
+        status: 'Active',
+        avatar: p.avatar || '',
+        assignedPrograms: [],
+        createdOn: p.created_at || new Date().toISOString().split('T')[0],
+      }));
+    }
+    return [];
+  },
+
+  async insertJudge(judge) {
+    // Sync to profiles for login
+    await this.upsertProfile({
+      id: judge.id,
+      username: judge.username,
+      password: judge.password,
+      name: judge.name,
+      role: 'Judge',
+      email: judge.email,
+    });
+
+    if (!isSupabaseConfigured) return;
+    try {
+      const { error } = await supabase.from('judges').insert([mapJudgeToDB(judge)]);
+      if (error) console.warn('insertJudge error:', error);
+    } catch (e) {
+      console.warn('insertJudge exception:', e);
     }
   },
 
-  saveLocalAll({ teams, managers, participants, programs, activities, markEntries, profiles, announcements }) {
-    if (teams !== undefined) setLocal(STORAGE_KEYS.teams, teams);
-    if (managers !== undefined) setLocal(STORAGE_KEYS.managers, managers);
-    if (participants !== undefined) setLocal(STORAGE_KEYS.participants, participants);
-    if (programs !== undefined) setLocal(STORAGE_KEYS.programs, programs);
-    if (activities !== undefined) setLocal(STORAGE_KEYS.activities, activities);
-    if (markEntries !== undefined) setLocal(STORAGE_KEYS.markEntries, markEntries);
-    if (profiles !== undefined) setLocal(STORAGE_KEYS.profiles, profiles);
-    if (announcements !== undefined) setLocal(STORAGE_KEYS.announcements, announcements);
+  async updateJudge(judge) {
+    // Sync to profiles
+    await this.upsertProfile({
+      id: judge.id,
+      username: judge.username,
+      password: judge.password,
+      name: judge.name,
+      role: 'Judge',
+      email: judge.email,
+    });
+
+    if (!isSupabaseConfigured) return;
+    try {
+      await supabase.from('judges').update(mapJudgeToDB(judge)).eq('id', judge.id);
+    } catch (e) {
+      console.warn('updateJudge error:', e);
+    }
+  },
+
+  async deleteJudge(id) {
+    if (!isSupabaseConfigured) return;
+    try {
+      await supabase.from('judges').delete().eq('id', id);
+      await supabase.from('profiles').delete().eq('id', id);
+    } catch (e) {
+      console.warn('deleteJudge error:', e);
+    }
   },
 };

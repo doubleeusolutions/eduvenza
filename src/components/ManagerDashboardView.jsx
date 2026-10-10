@@ -5,20 +5,33 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
   const upcomingEvents = programs.filter((p) => p.status === 'Upcoming' || p.status === 'In Progress').slice(0, 3);
   const completedEvents = programs.filter((p) => p.status === 'Completed' || p.status === 'Published').slice(0, 3);
 
-  // Calculate top scores for the team
+  // Only tally marks from competitions officially published by Admin
+  const publishedProgramIds = new Set(
+    programs.filter((p) => p.status === 'Published').map((p) => p.id)
+  );
+  const publishedMarkEntries = markEntries.filter((me) => publishedProgramIds.has(me.programId));
+
+  // Calculate top scores for the team (only published scores are visible to team managers)
   const participantPerformances = teamParticipants.map((p) => {
-    const pMarks = markEntries.filter((me) => me.participantId === p.id);
+    const pMarks = publishedMarkEntries.filter((me) => me.participantId === p.id);
     const totalScore = pMarks.reduce((acc, me) => acc + (Number(me.totalScore) || 0), 0);
     return { ...p, totalScore, evaluatedCount: pMarks.length };
   });
-  const topTeamScorers = [...participantPerformances].sort((a, b) => b.totalScore - a.totalScore).slice(0, 10);
+  const hasPublishedScores = participantPerformances.some((p) => p.totalScore > 0 || p.evaluatedCount > 0);
+  const topTeamScorers = [...participantPerformances]
+    .sort((a, b) => b.totalScore - a.totalScore)
+    .slice(0, 10);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
       {/* 4 STAT CARDS ROW matching bottom-left screenshot */}
       <div className="grid-responsive-sm">
         {/* Card 1: My Team (1) */}
-        <div className="stat-card" style={{ background: 'var(--stat-blue-bg)' }}>
+        <div
+          className="stat-card"
+          style={{ background: 'var(--stat-blue-bg)', cursor: 'pointer' }}
+          onClick={() => onNavigate && onNavigate('my-team')}
+        >
           <div className="stat-icon-wrapper" style={{ background: 'var(--stat-blue-icon)', color: 'var(--stat-blue-text)' }}>
             <Shield size={24} />
           </div>
@@ -32,8 +45,12 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
           </div>
         </div>
 
-        {/* Card 2: Participants (8) */}
-        <div className="stat-card" style={{ background: 'var(--stat-green-bg)' }}>
+        {/* Card 2: Participants */}
+        <div
+          className="stat-card"
+          style={{ background: 'var(--stat-green-bg)', cursor: 'pointer' }}
+          onClick={() => onNavigate && onNavigate('participants')}
+        >
           <div className="stat-icon-wrapper" style={{ background: 'var(--stat-green-icon)', color: 'var(--stat-green-text)' }}>
             <Users size={24} />
           </div>
@@ -47,8 +64,12 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
           </div>
         </div>
 
-        {/* Card 3: Competitions (5) */}
-        <div className="stat-card" style={{ background: 'var(--stat-yellow-bg)' }}>
+        {/* Card 3: Competitions */}
+        <div
+          className="stat-card"
+          style={{ background: 'var(--stat-yellow-bg)', cursor: 'pointer' }}
+          onClick={() => onNavigate && onNavigate('competitions')}
+        >
           <div className="stat-icon-wrapper" style={{ background: 'var(--stat-yellow-icon)', color: 'var(--stat-yellow-text)' }}>
             <Trophy size={24} />
           </div>
@@ -62,8 +83,12 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
           </div>
         </div>
 
-        {/* Card 4: Upcoming Events (3) */}
-        <div className="stat-card" style={{ background: 'var(--stat-purple-bg)' }}>
+        {/* Card 4: Upcoming Events */}
+        <div
+          className="stat-card"
+          style={{ background: 'var(--stat-purple-bg)', cursor: 'pointer' }}
+          onClick={() => onNavigate && onNavigate('competitions')}
+        >
           <div className="stat-icon-wrapper" style={{ background: 'var(--stat-purple-icon)', color: 'var(--stat-purple-text)' }}>
             <Calendar size={24} />
           </div>
@@ -136,7 +161,10 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
             <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)' }}>
               Upcoming Events
             </div>
-            <button style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+            <button
+              onClick={() => onNavigate && onNavigate('competitions')}
+              style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+            >
               View All
             </button>
           </div>
@@ -175,7 +203,7 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
                       {prg.name}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {prg.date} | {prg.time}
+                      {prg.date || 'Not Assigned'} • {prg.time || 'Not Assigned'}
                     </div>
                   </div>
                 </div>
@@ -192,7 +220,10 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
             <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)' }}>
               Completed Events
             </div>
-            <button style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+            <button
+              onClick={() => onNavigate && onNavigate('results')}
+              style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
+            >
               View All
             </button>
           </div>
@@ -231,7 +262,7 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
                       {prg.name}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {prg.date} | {prg.time}
+                      {prg.date || 'Not Assigned'} • {prg.time || 'Not Assigned'}
                     </div>
                   </div>
                 </div>
@@ -270,10 +301,15 @@ export default function ManagerDashboardView({ managerTeam, teamParticipants, pr
               </tr>
             </thead>
             <tbody>
-              {topTeamScorers.length === 0 ? (
+              {!hasPublishedScores ? (
                 <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                    No scores available yet for your team.
+                  <td colSpan={5} style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--text-main)', fontSize: '0.95rem', marginBottom: '0.35rem' }}>
+                      No Published Scores Yet
+                    </div>
+                    <div style={{ fontSize: '0.825rem', color: 'var(--text-muted)', maxWidth: '420px', margin: '0 auto' }}>
+                      Participant marks, scores, and team leaderboard ranks will appear here once official competition results are published by the administrator.
+                    </div>
                   </td>
                 </tr>
               ) : (

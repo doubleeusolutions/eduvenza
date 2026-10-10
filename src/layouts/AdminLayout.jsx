@@ -16,7 +16,10 @@ export default function AdminLayout() {
   else if (currentPath.includes('/admin/teams')) activePage = 'teams';
   else if (currentPath.includes('/admin/managers/new')) activePage = 'create-manager';
   else if (currentPath.includes('/admin/managers')) activePage = 'team-managers';
+  else if (currentPath.includes('/admin/judges/new')) activePage = 'create-judge';
+  else if (currentPath.includes('/admin/judges')) activePage = 'judges';
   else if (currentPath.includes('/admin/competitions')) activePage = 'competitions';
+  else if (currentPath.includes('/admin/mark-entry')) activePage = 'mark-entry';
   else if (currentPath.includes('/admin/participants')) activePage = 'participants';
   else if (currentPath.includes('/admin/reports')) activePage = 'reports';
   else if (currentPath.includes('/admin/marks')) activePage = 'marks';
@@ -30,7 +33,10 @@ export default function AdminLayout() {
       'create-team': '/admin/teams/new',
       'team-managers': '/admin/managers',
       'create-manager': '/admin/managers/new',
+      judges: '/admin/judges',
+      'create-judge': '/admin/judges/new',
       competitions: '/admin/competitions',
+      'mark-entry': '/admin/mark-entry',
       participants: '/admin/participants',
       reports: '/admin/reports',
       marks: '/admin/marks',

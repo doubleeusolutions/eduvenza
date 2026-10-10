@@ -9,10 +9,12 @@ import {
   MapPin,
   FileBarChart,
   ClipboardList,
+  ClipboardEdit,
   Settings,
   Megaphone,
   Shield,
-  Flame
+  Flame,
+  Award
 } from 'lucide-react';
 
 import EduvanzaLogoText from './EduvanzaLogoText';
@@ -20,12 +22,14 @@ import EduvanzaLogoText from './EduvanzaLogoText';
 import { useApp } from '../context/AppContext';
 
 export default function Sidebar({ userRole, activePage, setActivePage }) {
-  const { isSidebarOpen, setIsSidebarOpen } = useApp();
+  const { isSidebarOpen, setIsSidebarOpen, currentUser, activeManagerTeam } = useApp();
   const adminNav = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'teams', label: 'Teams', icon: Users },
     { id: 'team-managers', label: 'Team Managers', icon: UserCheck },
+    { id: 'judges', label: 'Judges', icon: Award },
     { id: 'competitions', label: 'Competitions', icon: Trophy },
+    { id: 'mark-entry', label: 'Mark Entry', icon: ClipboardEdit },
     { id: 'participants', label: 'Participants', icon: GraduationCap },
     { id: 'reports', label: 'Reports', icon: FileBarChart },
     { id: 'marks', label: 'Marks Report', icon: ClipboardList },
@@ -42,7 +46,12 @@ export default function Sidebar({ userRole, activePage, setActivePage }) {
     { id: 'announcements', label: 'Announcements', icon: Megaphone },
   ];
 
-  const navItems = userRole === 'Admin' ? adminNav : managerNav;
+  const judgeNav = [
+    { id: 'competitions', label: 'Competitions', icon: Trophy },
+    { id: 'announcements', label: 'Announcements', icon: Megaphone },
+  ];
+
+  const navItems = userRole === 'Admin' ? adminNav : userRole === 'Judge' ? judgeNav : managerNav;
 
   return (
     <aside className={`sidebar ${!isSidebarOpen ? 'collapsed' : 'sidebar-expanded'}`}>
@@ -60,9 +69,14 @@ export default function Sidebar({ userRole, activePage, setActivePage }) {
         />
         <div className="sidebar-logo-text" style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
           <EduvanzaLogoText height={18} />
-          {userRole === 'Manager' && (
+          {(userRole === 'Manager' || userRole === 'Team Manager') && (
             <div style={{ fontSize: '0.55rem', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               TEAM MANAGER
+            </div>
+          )}
+          {userRole === 'Judge' && (
+            <div style={{ fontSize: '0.55rem', fontWeight: 700, color: '#d97706', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              OFFICIAL JUDGE
             </div>
           )}
         </div>
@@ -116,10 +130,10 @@ export default function Sidebar({ userRole, activePage, setActivePage }) {
             width: '8px',
             height: '8px',
             borderRadius: '50%',
-            background: userRole === 'Admin' ? '#2563eb' : '#16a34a'
+            background: userRole === 'Admin' ? '#2563eb' : userRole === 'Judge' ? '#d97706' : '#16a34a'
           }} />
           <span className="sidebar-session-text" style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-main)' }}>
-            {userRole === 'Admin' ? 'Admin Portal' : 'Gujarat Manager'}
+            {userRole === 'Admin' ? 'Admin Portal' : userRole === 'Judge' ? 'Judge Portal' : (currentUser?.teamName || activeManagerTeam?.name || 'Team Manager')}
           </span>
         </div>
       </div>

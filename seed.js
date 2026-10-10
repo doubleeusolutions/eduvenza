@@ -44,8 +44,8 @@ const participants = [
 ];
 
 const programs = [
-  { id: 'prog-1', code: 'PRG001', name: 'Debate', category: 'Arts', type: 'Individual', member_count: 1, venue: 'Main Hall', date: '2026-10-15', time: '10:00 AM', status: 'Published', max_marks: 50 },
-  { id: 'prog-2', code: 'PRG002', name: 'Hackathon', category: 'Tech', type: 'Group', member_count: 4, venue: 'Lab 1', date: '2026-10-16', time: '09:00 AM', status: 'Published', max_marks: 100 }
+  { id: 'prog-1', code: 'PRG001', name: 'Debate', category: 'Arts', type: 'Individual', member_count: 1, venue: 'Main Hall', date: 'Not Assigned', time: 'Not Assigned', status: 'Published', max_marks: 50 },
+  { id: 'prog-2', code: 'PRG002', name: 'Hackathon', category: 'Tech', type: 'Group', member_count: 4, venue: 'Lab 1', date: 'Not Assigned', time: 'Not Assigned', status: 'Published', max_marks: 100 }
 ];
 
 async function seedData() {
